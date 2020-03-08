@@ -1,0 +1,147 @@
+---
+title: "Decision tree"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r include=FALSE}
+library(dplyr)
+
+rm(list = ls())
+```
+
+# Assign Buckets to Internationals
+
+### 1. Create a Dataframe of all possible input combinations
+
+```{r}
+# Create DF with all possible combinations
+relocating_to_city_code <- c("DE-HAMBURG","DE-BERLIN","DE-MUENCHEN","DE-KOELN", "DE-BONN", "DE-STUTTGART", "DE-DUESSELDORF", "DE-FRANKFURT", "DE-DORTMUND")
+country_type <- c("Third-country", "EU", "Privileged", "GB", "Switzerland")
+visa_status <- c("visa", "job seeker", "valid rp", "blue card", "none")
+income_range <- c("0-30.000", "30.001-40.560", "40.561-52.000", "52.001-59.400", "59.401-70.000", "70.001-80.000", "80.001-90.000", ">90.000")
+family_relocating_dummy <- c("Yes","No")
+
+col_names <- c("relocating_to", "country_type", "visa_status", "income_range", "family_relocating")
+
+df <- expand.grid(relocating_to_city_code, country_type, visa_status, income_range, family_relocating_dummy)
+colnames(df) <- col_names
+
+write.csv(df, file="decisiontree.csv", row.names = FALSE)
+```
+
+### 2. For each possible combination, define if a bucket gets assigned
+
+(1 = Yes, 0 = No)
+
+```{r}
+Newemployee_df <- read.csv("../input/DecisionTree - NewEmployee.csv")
+
+# Duplicate the df so we can split into training/test 
+newempl2_df <- rbind(Newemployee_df, Newemployee_df)
+
+# Generate a random list of index from 1 to 1309 (i.e. the maximum number of rows)
+shuffle_index <- sample(1:nrow(newempl2_df))
+#  use this index to shuffle the titanic dataset.
+newempl2_df <- newempl2_df[shuffle_index, ]
+
+# Convert NA to 0
+newempl2_df[is.na(newempl2_df)] <- 0
+
+head(newempl2_df)
+```
+
+### 3. Train a statistical model that estimates the probability of a bucket assignment, depending on the characteristics
+
+```{r}
+## Create train / test set
+
+create_train_test <- function(data, size = 0.8, train=TRUE) {
+  n_row = nrow(data)
+  total_row = size * n_row
+  train_sample <- 1:total_row
+  if (train == TRUE) {
+    return (data[train_sample, ])
+  } else {
+    return (data[-train_sample, ])
+  }
+}
+```
+
+```{r}
+# x-vars
+xvars <- colnames(newempl2_df %>% select(relocating_to:family_relocating))
+
+# get all buckets
+yvars <- colnames(newempl2_df %>% select(general_Family:Registration))
+
+# select a random sample
+#yvar <- sample(yvars, 1)
+yvar <- "ZAV"
+
+# take one bucket as yvar
+model_df <- newempl2_df %>% select(xvars, yvar)
+
+data_train <- create_train_test(model_df, 0.8, train = TRUE)
+data_test <- create_train_test(model_df, 0.8, train = FALSE)
+
+print(paste('Decision Tree for:',yvar))
+```
+
+
+```{r}
+library(rpart)
+library(rpart.plot)
+fit <- rpart(ZAV~., data = data_train, method = 'class')
+rpart.plot(fit, extra = 106)
+```
+
+- At the top, it is the overall probability of the bucket ZAV. It shows the proportion of users that need a ZAV (8%) 
+
+- The top node asks whether the user already has a valid rp (or blue card, job seeker, visa). If yes, then you go down to the root's left child node (depth 2). 80% percent have a valid rp and the probability of needing the ZAV is 0.
+
+### 4. Predict the buckets for our Internationals
+
+```{r}
+# Load userdata
+load("../../../Analytics/script/cleaned_data.RData")
+```
+
+Create a function that takes as input the user characteristics:
+
+- Nationality
+- Family relocating
+- Relocating to
+- Income range
+- Visa status (visa, blue card, RP)
+- Employment status (new employment, extension)
+
+... based on the trained models, check if a bucket should be assigned (yes / no)
+
+and returns the buckets that are assigned to that user.
+
+```{r}
+predict_df <- international_df_clean %>%
+  filter(code_relocating_city %in% relocating_to_city_code) %>%
+  filter(wasdeleted == FALSE) %>%
+  mutate(
+    name = name,
+    #family_relocating = as.factor(ifelse(is.na(family_status_id), "No", "Yes")),
+    family_relocating = as.factor(ifelse(family_status_id == 1, "No", "Yes")),
+    relocating_to = as.factor(code_relocating_city),
+    nationality = as.factor(country_type),
+    visa_status = as.factor("none"),
+    income_range = as.factor(income_group)
+  ) %>% select(c(email,family_relocating,relocating_to,nationality,visa_status,income_range))
+```
+
+```{r}
+predict_unseen <-predict(fit, predict_df, type = 'class')
+
+predict_df$zav <- predict_unseen
+
+predict_df %>% sample_n(20)
+```
+
+

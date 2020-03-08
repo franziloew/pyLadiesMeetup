@@ -1,0 +1,99 @@
+---
+title: "Example"
+output: html_notebook
+---
+
+## Import Data
+
+```{r}
+set.seed(678)
+path <- 'https://raw.githubusercontent.com/guru99-edu/R-Programming/master/titanic_data.csv'
+titanic <-read.csv(path)
+head(titanic)
+```
+
+```{r}
+# Generate a random list of index from 1 to 1309 (i.e. the maximum number of rows)
+shuffle_index <- sample(1:nrow(titanic))
+#  use this index to shuffle the titanic dataset.
+titanic <- titanic[shuffle_index, ]
+```
+
+## Clean Data
+```{r}
+library(dplyr)
+# Drop variables
+clean_titanic <- titanic %>%
+  select(-c(home.dest, cabin, name, x, ticket)) %>% 
+  #Convert to factor level
+	mutate(pclass = factor(pclass, levels = c(1, 2, 3), labels = c('Upper', 'Middle', 'Lower')),
+	survived = factor(survived, levels = c(0, 1), labels = c('No', 'Yes'))) %>%
+  na.omit()
+
+glimpse(clean_titanic)
+```
+
+## Create train / test set
+
+```{r}
+create_train_test <- function(data, size = 0.8, train=TRUE) {
+  n_row = nrow(data)
+  total_row = size * n_row
+  train_sample <- 1:total_row
+  if (train == TRUE) {
+    return (data[train_sample, ])
+  } else {
+    return (data[-train_sample, ])
+  }
+}
+```
+
+```{r}
+data_train <- create_train_test(clean_titanic, 0.8, train = TRUE)
+data_test <- create_train_test(clean_titanic, 0.8, train = FALSE)
+
+# use the function prop.table() combined with table() to verify if the randomization process is correct.
+prop.table(table(data_train$survived))
+```
+
+## Build model
+
+```{r}
+library(rpart)
+library(rpart.plot)
+fit <- rpart(survived~., data = data_train, method = 'class')
+
+rpart.plot(fit, extra = 106)
+```
+
+## Make a prediction
+
+Predict which passengers are more likely to survive after the collision from the test set. It means, you will know among those 209 passengers, which one will survive or not.
+
+```{r}
+predict_unseen <-predict(fit, data_test, type = 'class')
+
+# Create a table to count how many passengers are classified as survivors and passed away compare to the correct classification
+table_mat <- table(data_test$survived, predict_unseen)
+table_mat
+```
+
+The model correctly predicted 175 dead passengers (True negative) but classified 32 survivors as dead (False positive). By analogy, the model misclassified 33 passengers as survivors while they turned out to be dead (False negative) and 22 survivors that acutally survived (True positive).
+
+## Measure performance
+
+Compute the accuracy test from the confusion matrix as the proportion of true positive and true negative over the sum of the matrix.
+
+$$
+accuracy = \frac{TP+TN}{TP+TN+FP+FN}
+$$
+
+```{r}
+accuracy_Test <- sum(diag(table_mat)) / sum(table_mat)
+print(paste('Accuracy for test', accuracy_Test))
+```
+
+## Tune the hyper-parameters
+
+https://www.guru99.com/r-decision-trees.html
+
